@@ -150,7 +150,16 @@
       }
       if (!res.ok) return { users, complete: false };
 
-      const data = await res.json();
+      const text = await res.text();
+      if (text.trimStart().startsWith("<")) {
+        console.error("[NoMeSiguen] Instagram devolvió HTML en vez de JSON:",
+          res.status, res.url, "\n", text.slice(0, 300));
+        return { users, complete: false, htmlResponse: true };
+      }
+      let data;
+      try { data = JSON.parse(text); }
+      catch { return { users, complete: false }; }
+
       const page = data.users || [];
       users.push(...page);
       onPage(page, users.length);
@@ -578,13 +587,19 @@
         <div class="hint">nada sale de esta ventana ♡</div>
       </div></div>`;
     app.appendChild(div);
-    $("#start").onclick = startScan;
+    $("#start").onclick = () => startScan().catch((e) => {
+      console.error("[NoMeSiguen]", e);
+      setStatus(`Error: ${e.message}`);
+      S.status = "done";
+      updateProgress();
+    });
   }
 
   /* ---------- workspace ---------- */
 
   function renderWorkspace() {
     const old = $("#ws-root"); if (old) old.remove();
+    const home = $("#home-root"); if (home) home.remove();
     const div = document.createElement("div");
     div.id = "ws-root";
     div.innerHTML = `
@@ -813,6 +828,15 @@
       setStatus(`Descargando seguidos… ${total}`);
       updateList();
     });
+    if (!fwing.users.length) {
+      S.incomplete = true;
+      S.status = "done";
+      setStatus(fwing.htmlResponse
+        ? "Instagram no devolvió datos (respondió HTML) — verifica tu sesión."
+        : "Instagram no devolvió datos — revisa tu sesión y reintenta.");
+      renderWorkspace();
+      return;
+    }
 
     setStatus("Descargando seguidores…");
     const fwers = await fetchList("followers", (page, total) => {
