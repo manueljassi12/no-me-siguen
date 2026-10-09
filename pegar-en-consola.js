@@ -231,20 +231,45 @@
   }
 
   // solicitudes de seguimiento salientes (cuentas privadas que no te aceptaron)
+  const PENDING_URLS = [
+    "https://www.instagram.com/api/v1/friendships/pending/",
+    "https://www.instagram.com/api/v1/friendships/pending_requests/",
+  ];
+
   async function fetchPending(onPage) {
     const users = [];
-    let cursor = null;
-    for (;;) {
-      while (S.paused) await sleep(500);
-      const url = new URL("https://www.instagram.com/api/v1/friendships/pending/");
+    let base = null, more = null;
+    for (const b of PENDING_URLS) {
+      const url = new URL(b);
       url.searchParams.set("count", PAGE_SIZE);
-      if (cursor) url.searchParams.set("max_id", cursor);
+      const r = await fetchJSON(url);
+      if (r && !r.rateLimited && r.data) {
+        if (!Array.isArray(r.data.users)) {
+          console.warn(`[NoMeSiguen] ${b} respondió pero sin lista 'users':`,
+            JSON.stringify(r.data).slice(0, 300));
+          continue;
+        }
+        base = b;
+        users.push(...r.data.users);
+        onPage?.(r.data.users, users.length);
+        more = r.data;
+        break;
+      }
+      console.warn(`[NoMeSiguen] ${b} no devolvió JSON válido`);
+    }
+    if (!base) return users;
+    let cursor = more?.next_max_id || null;
+    while (more?.has_more && cursor) {
+      while (S.paused) await sleep(500);
+      const url = new URL(base);
+      url.searchParams.set("count", PAGE_SIZE);
+      url.searchParams.set("max_id", cursor);
       const r = await fetchJSON(url);
       if (!r || r.rateLimited || !Array.isArray(r.data?.users)) break;
-      users.push(...r.data.users);
-      onPage?.(r.data.users, users.length);
-      if (!r.data.has_more || !r.data.next_max_id) break;
-      cursor = r.data.next_max_id;
+      more = r.data;
+      users.push(...more.users);
+      onPage?.(more.users, users.length);
+      cursor = more.next_max_id || null;
       await sleep(rand(PAGE_DELAY));
     }
     return users;
@@ -371,6 +396,9 @@
       background: rgba(99,102,241,.14); color: #c7c9fb;
       border-color: rgba(99,102,241,.45);
     }
+    .credit { color: #565e70; font-size: 12px; text-decoration: none;
+      white-space: nowrap; transition: color .15s; }
+    .credit:hover { color: #a5b0ff; }
 
     /* ---- layout ---- */
     .body { display: flex; max-width: 1180px; margin: 0 auto; gap: 20px;
@@ -588,7 +616,7 @@
         <p>Descubre quién no te sigue de vuelta.<br>
            Resultados en tiempo real, directo en tu navegador.</p>
         <button class="btn-main" id="start">Escanear mi cuenta</button>
-        <div class="hint">nada sale de esta ventana</div>
+        <div class="hint">hecho por <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">@manuel_jassi</a> · nada sale de esta ventana</div>
       </div></div>`;
     app.appendChild(div);
     $("#start").onclick = () => startScan().catch((e) => {
@@ -609,6 +637,7 @@
     div.innerHTML = `
       <header class="top">
         <div class="logo"><i>♡</i> NoMeSiguen</div>
+        <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">por @manuel_jassi</a>
         <div class="searchwrap"><span>⌕</span>
           <input class="search" id="search" placeholder="Buscar usuarios…"
                  value="${esc(S.search)}">
@@ -616,6 +645,7 @@
         <button class="top-btn" id="copy">Copiar lista</button>
         <button class="top-btn" id="exp-json">JSON</button>
         <button class="top-btn" id="exp-csv">CSV</button>
+        <button class="top-btn" id="refresh" title="Recargar y volver a Instagram">↻ Actualizar</button>
         <button class="top-btn" id="exit">✕ Salir</button>
       </header>
       <div class="body">
@@ -673,6 +703,7 @@
     app.appendChild(div);
 
     $("#exit").onclick = () => location.reload();
+    $("#refresh").onclick = () => location.reload();
     $("#search").oninput = (e) => { S.search = e.target.value; S.page = 1; updateList(); };
     $("#copy").onclick = copyList;
     $("#exp-json").onclick = () => exportFile("json");
@@ -753,13 +784,18 @@
             ${inWhitelist(u.id) ? ' <span class="badge-w">★</span>' : ""}
             ${u.pending ? '<span class="chip-pending">analizando…</span>' : ""}
             ${u.requested ? '<span class="chip-pending">⏳ solicitud enviada</span>' : ""}
+            ${u.unverified ? '<span class="chip-pending">⚠ sin verificar</span>' : ""}
             <div class="sub">${esc(u.full_name)}</div>
           </div>
-          <input type="checkbox" data-id="${u.id}" ${S.selected.has(u.id) ? "checked" : ""} ${u.pending || u.requested ? "disabled" : ""}>
+          ${u.unverified ? `<button class="top-btn" data-rv="${u.id}" title="Comprobar de nuevo si te sigue">↺ revisar</button>` : ""}
+          <input type="checkbox" data-id="${u.id}" ${S.selected.has(u.id) ? "checked" : ""} ${u.pending || u.requested || u.unverified ? "disabled" : ""}>
         </div>`;
       }).join("");
       list.querySelectorAll(".ava[data-wl]").forEach((a) => {
         a.onclick = () => toggleWhitelist(a.dataset.wl);
+      });
+      list.querySelectorAll("[data-rv]").forEach((b) => {
+        b.onclick = () => verifyUser(b.dataset.rv);
       });
       list.querySelectorAll("input[data-id]").forEach((cb) => {
         cb.onchange = () => {
@@ -776,6 +812,27 @@
     const pv = $("#pg-prev"), nx = $("#pg-next");
     if (pv) pv.onclick = () => { S.page--; updateList(); };
     if (nx) nx.onclick = () => { S.page++; updateList(); };
+  }
+
+  // re-verifica una sola cuenta (cuando el escaneo de seguidores quedó incompleto)
+  async function verifyUser(id) {
+    const u = S.resultsMap.get(id);
+    if (!u) return;
+    setStatus(`Verificando @${u.username}…`);
+    const r = await fetchJSON(
+      `https://www.instagram.com/api/v1/friendships/show/${id}/`);
+    const followedBy = r?.data?.followed_by ?? r?.data?.friendship_status?.followed_by;
+    if (followedBy === undefined) {
+      setStatus(`No se pudo verificar @${u.username}.`);
+      return;
+    }
+    u.unverified = false;
+    u.follows_viewer = !!followedBy;
+    if (u.follows_viewer) S.selected.delete(id);
+    setStatus(followedBy
+      ? `@${u.username} SÍ te sigue ✔`
+      : `@${u.username} no te sigue`);
+    updateList();
   }
 
   function toggleWhitelist(id) {
@@ -881,7 +938,15 @@
     }
 
     S.results.forEach((u) => {
-      if (u.pending) { u.pending = false; u.follows_viewer = false; }
+      if (!u.pending) return;
+      u.pending = false;
+      if (fwers.complete) {
+        u.follows_viewer = false;
+      } else {
+        // la lista de seguidores quedó incompleta: no podemos afirmar
+        // que no te sigue — queda marcado para verificación individual
+        u.unverified = true;
+      }
     });
     // quita de la selección a quienes resultaron seguidores
     S.selected.forEach((id) => {
