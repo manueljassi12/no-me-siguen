@@ -12,7 +12,7 @@
  *
  * Funciones:
  *   - Escaneo en vivo: los usuarios aparecen mientras se descargan
- *   - Pestañas: No me siguen / Fans / Lista blanca
+ *   - Pestañas: No me siguen / Fans / Solicitudes pendientes / Lista blanca
  *   - Filtros (verificados, privados, sin foto) y búsqueda
  *   - Lista blanca persistente (clic en el avatar para proteger)
  *   - Exportar a JSON / CSV / copiar lista
@@ -89,9 +89,10 @@
     results: [],
     resultsMap: new Map(),
     fans: [],
+    requests: [],          // solicitudes de seguimiento enviadas sin aceptar
     whitelist: loadWhitelist(),
     selected: new Set(),
-    tab: "nome",           // nome | fans | wl
+    tab: "nome",           // nome | fans | sol | wl
     search: "",
     filter: { verificados: true, privados: true, sinfoto: true },
     page: 1,
@@ -108,6 +109,7 @@
   function visibleUsers() {
     const base =
       S.tab === "fans" ? S.fans :
+      S.tab === "sol"  ? S.requests :
       S.tab === "wl"   ? S.whitelist :
       S.results.filter((u) => !inWhitelist(u.id) && u.follows_viewer !== true);
     return base
@@ -226,6 +228,26 @@
       await sleep(rand(PAGE_DELAY));
     }
     return { users, complete: true };
+  }
+
+  // solicitudes de seguimiento salientes (cuentas privadas que no te aceptaron)
+  async function fetchPending(onPage) {
+    const users = [];
+    let cursor = null;
+    for (;;) {
+      while (S.paused) await sleep(500);
+      const url = new URL("https://www.instagram.com/api/v1/friendships/pending/");
+      url.searchParams.set("count", PAGE_SIZE);
+      if (cursor) url.searchParams.set("max_id", cursor);
+      const r = await fetchJSON(url);
+      if (!r || r.rateLimited || !Array.isArray(r.data?.users)) break;
+      users.push(...r.data.users);
+      onPage?.(r.data.users, users.length);
+      if (!r.data.has_more || !r.data.next_max_id) break;
+      cursor = r.data.next_max_id;
+      await sleep(rand(PAGE_DELAY));
+    }
+    return users;
   }
 
   async function unfollowUser(id) {
@@ -618,7 +640,8 @@
             <div class="stat-row"><span><i class="dot" style="background:#8b5cf6"></i>Siguiendo</span><b id="st-fwing">${S.following}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#38bdf8"></i>Seguidores</span><b id="st-fwers">${S.followers}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#6366f1"></i>No me siguen</span><b class="hot" id="st-nome">${noMeSiguenCount()}</b></div>
-            <div class="stat-row"><span><i class="dot" style="background:#565e70"></i>Pendientes</span><b id="st-pend">${S.results.filter(u => u.pending).length}</b></div>
+            <div class="stat-row"><span><i class="dot" style="background:#565e70"></i>Analizando</span><b id="st-pend">${S.results.filter(u => u.pending).length}</b></div>
+            <div class="stat-row"><span><i class="dot" style="background:#f59e0b"></i>Solicitudes</span><b id="st-sol">${S.requests.length}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#fbbf24"></i>Lista blanca</span><b class="wl" id="st-wl">${S.whitelist.length}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#4ade80"></i>Seleccionados</span><b id="st-sel">${S.selected.size}</b></div>
           </div>
@@ -640,6 +663,7 @@
           <div class="tabs">
             <button class="tab ${S.tab === "nome" ? "active" : ""}" data-t="nome">No me siguen <span class="n" id="n-nome"></span></button>
             <button class="tab ${S.tab === "fans" ? "active" : ""}" data-t="fans">Fans <span class="n" id="n-fans"></span></button>
+            <button class="tab ${S.tab === "sol" ? "active" : ""}" data-t="sol">⏳ Solicitudes <span class="n" id="n-sol"></span></button>
             <button class="tab ${S.tab === "wl" ? "active" : ""}" data-t="wl">★ Lista blanca <span class="n" id="n-wl"></span></button>
           </div>
           <div id="list"></div>
@@ -691,6 +715,8 @@
     setN("#uf-n", S.selected.size);
     setN("#n-nome", `(${S.results.filter(u => !inWhitelist(u.id) && u.follows_viewer !== true).length})`);
     setN("#n-fans", `(${S.fans.length})`);
+    setN("#n-sol", `(${S.requests.length})`);
+    setN("#st-sol", S.requests.length);
     setN("#n-wl", `(${S.whitelist.length})`);
   }
 
@@ -726,9 +752,10 @@
             ${u.is_private ? ' <span class="badge-p">privado</span>' : ""}
             ${inWhitelist(u.id) ? ' <span class="badge-w">★</span>' : ""}
             ${u.pending ? '<span class="chip-pending">analizando…</span>' : ""}
+            ${u.requested ? '<span class="chip-pending">⏳ solicitud enviada</span>' : ""}
             <div class="sub">${esc(u.full_name)}</div>
           </div>
-          <input type="checkbox" data-id="${u.id}" ${S.selected.has(u.id) ? "checked" : ""} ${u.pending ? "disabled" : ""}>
+          <input type="checkbox" data-id="${u.id}" ${S.selected.has(u.id) ? "checked" : ""} ${u.pending || u.requested ? "disabled" : ""}>
         </div>`;
       }).join("");
       list.querySelectorAll(".ava[data-wl]").forEach((a) => {
@@ -755,7 +782,8 @@
     if (inWhitelist(id)) {
       S.whitelist = S.whitelist.filter((u) => u.id !== id);
     } else {
-      const u = S.resultsMap.get(id) || S.fans.find((x) => x.id === id);
+      const u = S.resultsMap.get(id) || S.fans.find((x) => x.id === id) ||
+                S.requests.find((x) => x.id === id);
       if (!u) return;
       S.whitelist.push({ ...u });
       S.selected.delete(id);
@@ -833,6 +861,24 @@
       setStatus(`Descargando seguidores… ${total}`);
       updateList();
     });
+
+    // solicitudes enviadas que aún no aceptan (si falla, no rompe el escaneo)
+    setStatus("Buscando solicitudes pendientes…");
+    try {
+      const pend = await fetchPending((page, total) => {
+        page.forEach((u) => {
+          const n = normalize(u, false);
+          n.requested = true;
+          S.requests.push(n);
+        });
+        updateList();
+      });
+      setStatus(pend.length
+        ? `${pend.length} solicitudes pendientes`
+        : "Sin solicitudes pendientes");
+    } catch (e) {
+      console.warn("[NoMeSiguen] No se pudieron cargar solicitudes pendientes:", e);
+    }
 
     S.results.forEach((u) => {
       if (u.pending) { u.pending = false; u.follows_viewer = false; }
