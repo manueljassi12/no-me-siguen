@@ -339,11 +339,24 @@
       background: linear-gradient(145deg, #6366f1, #4f46e5);
       box-shadow: 0 10px 30px rgba(99,102,241,.4);
     }
-    .mark span { font-size: 32px; color: #fff; }
+    .mark svg { width: 30px; height: 30px; display: block; }
     .home-card h1 { font-size: 26px; margin-bottom: 8px; font-weight: 800;
       letter-spacing: .2px; color: #f0f1f5; }
     .home-card p { color: #8b93a5; font-size: 13.5px; line-height: 1.7;
       margin-bottom: 28px; }
+    .credit-pill {
+      display: inline-flex; align-items: center; gap: 8px; margin-top: 24px;
+      padding: 10px 20px; border-radius: 999px; text-decoration: none;
+      background: rgba(99,102,241,.1); border: 1px solid rgba(99,102,241,.45);
+      color: #c7c9fb; font-size: 13px; font-weight: 700; letter-spacing: .2px;
+      transition: all .15s;
+    }
+    .credit-pill:hover {
+      background: rgba(99,102,241,.2); transform: translateY(-1px);
+      box-shadow: 0 8px 24px rgba(99,102,241,.25);
+    }
+    .credit-pill svg { width: 15px; height: 15px; }
+    .credit-pill b { color: #a5b0ff; }
     .btn-main {
       background: #6366f1; color: #fff; border-radius: 12px;
       padding: 14px 36px; font-size: 14px; font-weight: 700;
@@ -366,13 +379,14 @@
       letter-spacing: .3px; color: #f0f1f5; display: flex; align-items: center; gap: 9px; }
     .logo i {
       width: 26px; height: 26px; border-radius: 8px; display: grid;
-      place-items: center; font-style: normal; font-size: 13px; color: #fff;
+      place-items: center; font-style: normal; color: #fff;
       background: linear-gradient(145deg, #6366f1, #4f46e5);
     }
+    .logo i svg { width: 14px; height: 14px; display: block; }
     .searchwrap { flex: 1; max-width: 320px; position: relative; }
-    .searchwrap span {
-      position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
-      color: #565e70; font-size: 14px; pointer-events: none;
+    .searchwrap svg {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      color: #565e70; width: 15px; height: 15px; pointer-events: none;
     }
     .search {
       width: 100%; height: 38px; border-radius: 10px;
@@ -387,6 +401,7 @@
       box-shadow: 0 0 0 3px rgba(99,102,241,.15);
     }
     .top-btn {
+      display: inline-flex; align-items: center; gap: 6px;
       background: rgba(255,255,255,.05); color: #b9bfcc;
       border: 1px solid rgba(255,255,255,.1); border-radius: 10px;
       padding: 9px 14px; font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -396,9 +411,17 @@
       background: rgba(99,102,241,.14); color: #c7c9fb;
       border-color: rgba(99,102,241,.45);
     }
-    .credit { color: #565e70; font-size: 12px; text-decoration: none;
-      white-space: nowrap; transition: color .15s; }
-    .credit:hover { color: #a5b0ff; }
+    .credit {
+      display: inline-flex; align-items: center; gap: 7px;
+      color: #8b93a5; font-size: 12px; font-weight: 600; text-decoration: none;
+      white-space: nowrap; padding: 7px 13px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04);
+      transition: all .15s;
+    }
+    .credit:hover { color: #c7c9fb; border-color: rgba(99,102,241,.45);
+      background: rgba(99,102,241,.1); }
+    .credit svg { width: 13px; height: 13px; }
+    .credit b { color: #a5b0ff; }
 
     /* ---- layout ---- */
     .body { display: flex; max-width: 1180px; margin: 0 auto; gap: 20px;
@@ -611,12 +634,16 @@
     div.id = "home-root";
     div.innerHTML = `
       <div class="home"><div class="home-card">
-        <div class="mark"><span>♡</span></div>
+        <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
         <h1>NoMeSiguen</h1>
         <p>Descubre quién no te sigue de vuelta.<br>
            Resultados en tiempo real, directo en tu navegador.</p>
-        <button class="btn-main" id="start">Escanear mi cuenta</button>
-        <div class="hint">hecho por <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">@manuel_jassi</a> · nada sale de esta ventana</div>
+        <button class="btn-main" id="start">Escanear mi cuenta</button><br>
+        <a class="credit-pill" href="https://www.instagram.com/manuel_jassi" target="_blank">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+          hecho por <b>@manuel_jassi</b>
+        </a>
+        <div class="hint">nada sale de esta ventana</div>
       </div></div>`;
     app.appendChild(div);
     $("#start").onclick = () => startScan().catch((e) => {
@@ -636,17 +663,20 @@
     div.id = "ws-root";
     div.innerHTML = `
       <header class="top">
-        <div class="logo"><i>♡</i> NoMeSiguen</div>
-        <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">por @manuel_jassi</a>
-        <div class="searchwrap"><span>⌕</span>
+        <div class="logo"><i><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></i> NoMeSiguen</div>
+        <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+          por <b>@manuel_jassi</b>
+        </a>
+        <div class="searchwrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input class="search" id="search" placeholder="Buscar usuarios…"
                  value="${esc(S.search)}">
         </div>
         <button class="top-btn" id="copy">Copiar lista</button>
         <button class="top-btn" id="exp-json">JSON</button>
         <button class="top-btn" id="exp-csv">CSV</button>
-        <button class="top-btn" id="refresh" title="Recargar y volver a Instagram">↻ Actualizar</button>
-        <button class="top-btn" id="exit">✕ Salir</button>
+        <button class="top-btn" id="refresh" title="Recargar y volver a Instagram"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Actualizar</button>
+        <button class="top-btn" id="exit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Salir</button>
       </header>
       <div class="body">
         <aside>
@@ -656,7 +686,7 @@
             <div class="pbar"><i id="pfill" style="width:${S.progress}%"></i></div>
             <div class="scan-status" id="scan-status">${esc(S.statusText)}</div>
             ${S.status === "scanning"
-              ? `<button class="btn-sec" id="pause">${S.paused ? "▶ Reanudar" : "⏸ Pausar"}</button>`
+              ? `<button class="btn-sec" id="pause">${S.paused ? "Reanudar" : "Pausar"}</button>`
               : ""}
           </div>
           <div class="card">
@@ -711,7 +741,7 @@
     const pb = $("#pause");
     if (pb) pb.onclick = () => {
       S.paused = !S.paused;
-      pb.textContent = S.paused ? "▶ Reanudar" : "⏸ Pausar";
+      pb.textContent = S.paused ? "Reanudar" : "Pausar";
     };
     $$(".tab").forEach((t) => (t.onclick = () => {
       S.tab = t.dataset.t; S.page = 1;
