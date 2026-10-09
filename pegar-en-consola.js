@@ -129,42 +129,95 @@
     "X-ASBD-ID": "129477",
     "X-CSRFToken": CSRF,
     "X-Requested-With": "XMLHttpRequest",
+    "Accept": "*/*",
   };
+  const wwwClaim = localStorage.getItem("www-claim-v2");
+  if (wwwClaim) HEADERS["X-IG-WWW-Claim"] = wwwClaim;
+
+  // Instagram migró muchas cuentas de /api/v1/friendships/ a GraphQL.
+  // Probamos ambos; el primero que responda JSON válido se usa para todo.
+  const GQL = {
+    followers: { hash: "c76146de99bb02f6415203be841dd25a", edge: "edge_followed_by" },
+    following: { hash: "d04b0a864b4b54837c0d870b0e77e076", edge: "edge_follow" },
+  };
+  let strategy = null; // "rest" | "gql" — se fija con la primera página válida
+
+  async function fetchJSON(url) {
+    const res = await fetch(url, { credentials: "same-origin", headers: HEADERS });
+    if (res.status === 429) return { rateLimited: true };
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (text.trimStart().startsWith("<")) {
+      console.warn("[NoMeSiguen] HTML en vez de JSON:", res.status, res.url.slice(0, 80));
+      return null;
+    }
+    try { return { data: JSON.parse(text) }; }
+    catch { return null; }
+  }
+
+  async function pageREST(kind, cursor) {
+    const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
+    url.searchParams.set("count", PAGE_SIZE);
+    if (cursor) url.searchParams.set("max_id", cursor);
+    const r = await fetchJSON(url);
+    if (!r) return null;
+    if (r.rateLimited) return r;
+    if (!Array.isArray(r.data.users)) return null;
+    return { users: r.data.users, next: r.data.next_max_id || null,
+             hasMore: !!r.data.has_more && !!r.data.next_max_id };
+  }
+
+  async function pageGQL(kind, cursor) {
+    const vars = { id: USER_ID, include_reel: true, fetch_mutual: false, first: PAGE_SIZE };
+    if (cursor) vars.after = cursor;
+    const url = `https://www.instagram.com/graphql/query/?query_hash=${GQL[kind].hash}` +
+      `&variables=${encodeURIComponent(JSON.stringify(vars))}`;
+    const r = await fetchJSON(url);
+    if (!r) return null;
+    if (r.rateLimited) return r;
+    const edge = r.data?.data?.user?.[GQL[kind].edge];
+    if (!edge) return null;
+    return { users: (edge.edges || []).map((e) => e.node),
+             next: edge.page_info?.end_cursor || null,
+             hasMore: !!edge.page_info?.has_next_page };
+  }
+
+  async function fetchPage(kind, cursor) {
+    const strats = strategy ? [strategy] : ["rest", "gql"];
+    for (const st of strats) {
+      const r = st === "rest" ? await pageREST(kind, cursor) : await pageGQL(kind, cursor);
+      if (r && r.rateLimited) return r;
+      if (r) {
+        if (!strategy) {
+          strategy = st;
+          console.info(`[NoMeSiguen] Usando endpoint ${st === "rest" ? "REST" : "GraphQL"}`);
+        }
+        return r;
+      }
+    }
+    return null;
+  }
 
   async function fetchList(kind, onPage) {
     const users = [];
-    let maxId = null, pages = 0;
+    let cursor = null, pages = 0;
     for (;;) {
       while (S.paused) await sleep(500);
-      const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
-      url.searchParams.set("count", PAGE_SIZE);
-      if (maxId) url.searchParams.set("max_id", maxId);
 
-      let res = null;
+      let page = null;
       for (let t = 0; t <= MAX_RETRIES; t++) {
-        res = await fetch(url, { credentials: "same-origin", headers: HEADERS });
-        if (res.status !== 429) break;
+        page = await fetchPage(kind, cursor);
+        if (!page || !page.rateLimited) break;
         if (t === MAX_RETRIES) return { users, complete: false };
         setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
         await sleep(RETRY_DELAY);
       }
-      if (!res.ok) return { users, complete: false };
+      if (!page) return { users, complete: false };
 
-      const text = await res.text();
-      if (text.trimStart().startsWith("<")) {
-        console.error("[NoMeSiguen] Instagram devolvió HTML en vez de JSON:",
-          res.status, res.url, "\n", text.slice(0, 300));
-        return { users, complete: false, htmlResponse: true };
-      }
-      let data;
-      try { data = JSON.parse(text); }
-      catch { return { users, complete: false }; }
-
-      const page = data.users || [];
-      users.push(...page);
-      onPage(page, users.length);
-      if (!data.has_more || !data.next_max_id || !page.length) break;
-      maxId = data.next_max_id;
+      users.push(...page.users);
+      onPage(page.users, users.length);
+      if (!page.hasMore || !page.users.length) break;
+      cursor = page.next;
       if (++pages % CYCLE_EVERY === 0) {
         const d = rand(CYCLE_DELAY);
         setStatus(`Pausa de seguridad ${Math.round(d / 1000)}s…`);
@@ -760,9 +813,7 @@
     if (!fwing.users.length) {
       S.incomplete = true;
       S.status = "done";
-      setStatus(fwing.htmlResponse
-        ? "Instagram no devolvió datos (respondió HTML) — verifica tu sesión."
-        : "Instagram no devolvió datos — revisa tu sesión y reintenta.");
+      setStatus("Instagram no devolvió datos — recarga instagram.com, confirma tu sesión y reintenta.");
       renderWorkspace();
       return;
     }
