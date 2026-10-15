@@ -204,16 +204,17 @@
     const strats = cursor && strategy ? [strategy]
       : strategy ? [strategy, ...["rest", "rest2", "gql"].filter((s) => s !== strategy)]
       : ["rest", "rest2", "gql"];
+    let saw429 = false;
     for (const st of strats) {
       const r = st === "gql" ? await pageGQL(kind, cursor)
             : st === "rest2" ? await pageREST2(kind, cursor)
             : await pageREST(kind, cursor);
-      if (r.rateLimited) return r;
+      if (r.rateLimited) { saw429 = true; logDiag(`${kind}/${st}: rate limit 429`); continue; }
       if (r.fail) { logDiag(`${kind}/${st}: ${r.fail}`); continue; }
       if (!strategy) { strategy = st; logDiag(`Endpoint que funcionó: ${st}`); }
       return r;
     }
-    return null;
+    return saw429 ? { rateLimited: true } : null;
   }
 
   async function fetchList(kind, onPage) {
@@ -228,8 +229,10 @@
         if (page && !page.rateLimited) break;
         if (t === MAX_RETRIES) return { users, complete: false };
         if (page?.rateLimited) {
-          setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
-          await sleep(RETRY_DELAY);
+          // backoff exponencial: 45s, 90s, 180s…
+          const wait = 45000 * (t + 1);
+          setStatus(`Instagram limitó el ritmo, esperando ${Math.round(wait / 1000)}s…`);
+          await sleep(wait);
         } else {
           // la página falló (HTML, timeout, etc.) — reintenta antes de rendirse
           logDiag(`${kind}: página ${pages + 1} falló, reintento ${t + 1}`);
@@ -925,6 +928,12 @@
       renderWorkspace();
       return;
     }
+
+    // pausa larga entre listas — Instagram bloquea "followers" si llega
+    // demasiado pronto después de descargar "following"
+    const gap = rand([20000, 30000]);
+    setStatus(`Pausa de seguridad entre listas ${Math.round(gap / 1000)}s…`);
+    await sleep(gap);
 
     setStatus("Descargando seguidores…");
     const fwers = await fetchList("followers", (page, total) => {
