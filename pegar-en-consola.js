@@ -140,31 +140,47 @@
     followers: { hash: "c76146de99bb02f6415203be841dd25a", edge: "edge_followed_by" },
     following: { hash: "d04b0a864b4b54837c0d870b0e77e076", edge: "edge_follow" },
   };
-  let strategy = null; // "rest" | "gql" — se fija con la primera página válida
+  let strategy = null; // "rest" | "rest2" | "gql" — se fija con la primera página válida
+  const DIAG = [];         // bitácora de intentos para el botón "Copiar diagnóstico"
+
+  function logDiag(msg) { DIAG.push(msg); console.info(`[NoMeSiguen] ${msg}`); }
 
   async function fetchJSON(url) {
     const res = await fetch(url, { credentials: "same-origin", headers: HEADERS });
-    if (res.status === 429) return { rateLimited: true };
-    if (!res.ok) return null;
+    if (res.status === 429) return { rateLimited: true, status: 429 };
     const text = await res.text();
+    if (!res.ok) return { fail: `HTTP ${res.status}` };
     if (text.trimStart().startsWith("<")) {
-      console.warn("[NoMeSiguen] HTML en vez de JSON:", res.status, res.url.slice(0, 80));
-      return null;
+      return { fail: `HTML (status ${res.status}, url final: ${res.url.slice(0, 50)})` };
     }
     try { return { data: JSON.parse(text) }; }
-    catch { return null; }
+    catch { return { fail: "respuesta no-JSON" }; }
+  }
+
+  function unpackREST(r) {
+    if (r.rateLimited) return r;
+    if (r.fail) return r;
+    if (!Array.isArray(r.data?.users)) return { fail: "JSON sin lista 'users'" };
+    return { users: r.data.users, next: r.data.next_max_id || null,
+             hasMore: !!r.data.has_more && !!r.data.next_max_id };
   }
 
   async function pageREST(kind, cursor) {
     const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
     url.searchParams.set("count", PAGE_SIZE);
     if (cursor) url.searchParams.set("max_id", cursor);
-    const r = await fetchJSON(url);
-    if (!r) return null;
-    if (r.rateLimited) return r;
-    if (!Array.isArray(r.data.users)) return null;
-    return { users: r.data.users, next: r.data.next_max_id || null,
-             hasMore: !!r.data.has_more && !!r.data.next_max_id };
+    return unpackREST(await fetchJSON(url));
+  }
+
+  // mismo endpoint pero con los parámetros que usa el cliente real
+  async function pageREST2(kind, cursor) {
+    const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
+    url.searchParams.set("count", PAGE_SIZE);
+    url.searchParams.set("search_surface", "follow_list_page");
+    url.searchParams.set("rank_token",
+      crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    if (cursor) url.searchParams.set("max_id", cursor);
+    return unpackREST(await fetchJSON(url));
   }
 
   async function pageGQL(kind, cursor) {
@@ -173,27 +189,24 @@
     const url = `https://www.instagram.com/graphql/query/?query_hash=${GQL[kind].hash}` +
       `&variables=${encodeURIComponent(JSON.stringify(vars))}`;
     const r = await fetchJSON(url);
-    if (!r) return null;
-    if (r.rateLimited) return r;
+    if (r.rateLimited || r.fail) return r;
     const edge = r.data?.data?.user?.[GQL[kind].edge];
-    if (!edge) return null;
+    if (!edge) return { fail: "GraphQL sin el campo esperado" };
     return { users: (edge.edges || []).map((e) => e.node),
              next: edge.page_info?.end_cursor || null,
              hasMore: !!edge.page_info?.has_next_page };
   }
 
   async function fetchPage(kind, cursor) {
-    const strats = strategy ? [strategy] : ["rest", "gql"];
+    const strats = strategy ? [strategy] : ["rest", "rest2", "gql"];
     for (const st of strats) {
-      const r = st === "rest" ? await pageREST(kind, cursor) : await pageGQL(kind, cursor);
-      if (r && r.rateLimited) return r;
-      if (r) {
-        if (!strategy) {
-          strategy = st;
-          console.info(`[NoMeSiguen] Usando endpoint ${st === "rest" ? "REST" : "GraphQL"}`);
-        }
-        return r;
-      }
+      const r = st === "gql" ? await pageGQL(kind, cursor)
+            : st === "rest2" ? await pageREST2(kind, cursor)
+            : await pageREST(kind, cursor);
+      if (r.rateLimited) return r;
+      if (r.fail) { logDiag(`${kind}/${st}: ${r.fail}`); continue; }
+      if (!strategy) { strategy = st; logDiag(`Endpoint que funcionó: ${st}`); }
+      return r;
     }
     return null;
   }
@@ -631,6 +644,7 @@
         <button class="top-btn" id="copy">Copiar lista</button>
         <button class="top-btn" id="exp-json">JSON</button>
         <button class="top-btn" id="exp-csv">CSV</button>
+        <button class="top-btn" id="diag" title="Copiar reporte técnico para soporte">Diagnóstico</button>
         <button class="top-btn" id="refresh" title="Recargar y volver a Instagram"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Actualizar</button>
         <button class="top-btn" id="exit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Salir</button>
       </header>
@@ -688,6 +702,7 @@
 
     $("#exit").onclick = () => location.reload();
     $("#refresh").onclick = () => location.reload();
+    $("#diag").onclick = copyDiag;
     $("#search").oninput = (e) => { S.search = e.target.value; S.page = 1; updateList(); };
     $("#copy").onclick = copyList;
     $("#exp-json").onclick = () => exportFile("json");
@@ -831,6 +846,22 @@
 
   /* ---------- exportar ---------- */
 
+  function copyDiag() {
+    const report = [
+      "=== Diagnóstico NoMeSiguen ===",
+      `user-agent: ${navigator.userAgent}`,
+      `cookies: sessionid=${cookie("sessionid") ? "SI" : "NO"} ds_user_id=${USER_ID ? "SI" : "NO"} csrftoken=${CSRF ? "SI" : "NO"}`,
+      `endpoint usado: ${strategy || "ninguno funcionó"}`,
+      ...DIAG,
+      `seguidos descargados: ${S.following}`,
+      `seguidores descargados: ${S.followers}`,
+      `estado: ${S.status} | incompleto: ${S.incomplete}`,
+    ].join("\n");
+    navigator.clipboard.writeText(report)
+      .then(() => setStatus("Diagnóstico copiado — pégaselo a quien te ayude"))
+      .catch(() => console.log(report));
+  }
+
   function copyList() {
     navigator.clipboard.writeText(
       visibleUsers().map((u) => u.username).join("\n")
@@ -878,7 +909,7 @@
     if (!fwing.users.length) {
       S.incomplete = true;
       S.status = "done";
-      setStatus("Instagram no devolvió datos — recarga instagram.com, confirma tu sesión y reintenta.");
+      setStatus("Instagram no devolvió datos. Presiona el botón 'Diagnóstico' arriba y comparte lo que copia.");
       renderWorkspace();
       return;
     }
