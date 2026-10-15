@@ -198,7 +198,12 @@
   }
 
   async function fetchPage(kind, cursor) {
-    const strats = strategy ? [strategy] : ["rest", "rest2", "gql"];
+    // el cursor de REST y GraphQL no son compatibles: en mitad de la lista
+    // hay que seguir con la misma estrategia; si es la 1ª página, se puede
+    // re-probar con las demás aunque ya exista una estrategia fijada
+    const strats = cursor && strategy ? [strategy]
+      : strategy ? [strategy, ...["rest", "rest2", "gql"].filter((s) => s !== strategy)]
+      : ["rest", "rest2", "gql"];
     for (const st of strats) {
       const r = st === "gql" ? await pageGQL(kind, cursor)
             : st === "rest2" ? await pageREST2(kind, cursor)
@@ -220,10 +225,17 @@
       let page = null;
       for (let t = 0; t <= MAX_RETRIES; t++) {
         page = await fetchPage(kind, cursor);
-        if (!page || !page.rateLimited) break;
+        if (page && !page.rateLimited) break;
         if (t === MAX_RETRIES) return { users, complete: false };
-        setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
-        await sleep(RETRY_DELAY);
+        if (page?.rateLimited) {
+          setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
+          await sleep(RETRY_DELAY);
+        } else {
+          // la página falló (HTML, timeout, etc.) — reintenta antes de rendirse
+          logDiag(`${kind}: página ${pages + 1} falló, reintento ${t + 1}`);
+          setStatus(`Una página falló — reintentando (${t + 1}/${MAX_RETRIES})…`);
+          await sleep(5000 + t * 5000);
+        }
       }
       if (!page) return { users, complete: false };
 
