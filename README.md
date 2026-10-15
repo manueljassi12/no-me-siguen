@@ -8,21 +8,13 @@
 
 ## 🚀 Cómo usarlo
 
-### ⭐ Forma más fácil — Instalador (recomendado)
-
-👉 **[manueljassi12.github.io/no-me-siguen](https://manueljassi12.github.io/no-me-siguen/)**
-
-Arrastra el botón a tu barra de favoritos — después solo entras a instagram.com y le das clic. Sin consola, sin pegar código, sin `allow pasting`.
-
-### Alternativa — Consola
-
-#### Paso 1 — Copia el código
+### Paso 1 — Copia el código
 
 👉 **[Abrir `pegar-en-consola.js`](./pegar-en-consola.js)** y presiona el botón **⧉ copiar** que GitHub muestra arriba a la derecha del archivo.
 
 O copia el raw: **[pegar-en-consola.js (raw)](../../raw/main/pegar-en-consola.js)** → `Ctrl+A` → `Ctrl+C`
 
-#### Paso 2 — Pégalo en Instagram
+### Paso 2 — Pégalo en Instagram
 
 1. Abre **[instagram.com](https://instagram.com)** con tu sesión iniciada
 2. Presiona `F12` → pestaña **Console**
