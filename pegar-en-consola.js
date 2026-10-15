@@ -145,6 +145,7 @@
           credentials: host === "https://i.instagram.com" ? "include" : "same-origin",
           headers: HEADERS,
         });
+        if (r.status === 429) return "limited";
         const t = await r.text();
         if (r.ok && !t.trimStart().startsWith("<")) return "ok";
         if (t.trimStart().startsWith("<")) sawRedirect = true;
@@ -811,7 +812,9 @@
     if (alive !== "ok") {
       S.status = "done";
       S.incomplete = true;
-      setStatus(alive === "redirected"
+      setStatus(alive === "limited"
+        ? "Instagram limitó tu cuenta por exceso de peticiones (HTTP 429). No es el código — espera varias horas SIN correr la app y reintenta. Cada intento reinicia el castigo."
+        : alive === "redirected"
         ? "Instagram está redirigiendo las peticiones (sesión vencida o bloqueo temporal). Recarga instagram.com — si te pide iniciar sesión, entra de nuevo. Si tu feed se ve normal, tu cuenta tiene límite temporal: espera 1-2 horas sin usar la app."
         : "No se pudo verificar la sesión — revisa tu conexión y que estés dentro de instagram.com.");
       renderWorkspace();
