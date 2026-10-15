@@ -90,11 +90,11 @@
     <p class="sub">Descubre quién no te sigue de vuelta en Instagram.<br>Sin apps, sin consola, sin contraseñas.</p>
 
     <div class="drag-zone">
-      <a class="bookmarklet" href="javascript:(()=>{fetch('https://raw.githubusercontent.com/manueljassi12/no-me-siguen/main/pegar-en-consola.js').then(r=>r.text()).then(eval)})()">
+      <a class="bookmarklet" id="bm" href="javascript:void(0)">
         <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
         NoMeSiguen
       </a>
-      <div class="drag-hint">↑ ARRASTRA este botón a tu barra de favoritos ↑</div>
+      <div class="drag-hint" id="drag-hint">cargando el marcador…</div>
     </div>
 
     <ol class="steps">
@@ -110,8 +110,31 @@
 
     <p class="fine">
       Todo ocurre en tu navegador — nada se envía a ningún servidor.<br>
-      ¿Prefieres la consola? Código en <a href="https://github.com/manueljassi12/no-me-siguen" target="_blank">GitHub</a>.
+      ¿Prefieres la consola? <a href="#" id="copy-code">Copiar código</a> · <a href="https://github.com/manueljassi12/no-me-siguen" target="_blank">GitHub</a>.
     </p>
   </div>
+  <script>
+    // Instagram bloquea (CSP) que un marcador descargue código externo,
+    // así que el marcador lleva TODO el código embebido.
+    (async () => {
+      const bm = document.getElementById('bm');
+      const hint = document.getElementById('drag-hint');
+      let code = null;
+      try {
+        const r = await fetch('https://raw.githubusercontent.com/manueljassi12/no-me-siguen/main/pegar-en-consola.js');
+        code = await r.text();
+        bm.href = 'javascript:' + encodeURIComponent(code);
+        hint.textContent = '↑ ARRASTRA este botón a tu barra de favoritos ↑';
+      } catch (e) {
+        hint.textContent = 'no cargó el marcador — usa "Copiar código"';
+      }
+      document.getElementById('copy-code').onclick = async (e) => {
+        e.preventDefault();
+        if (!code) { alert('Todavía cargando…'); return; }
+        await navigator.clipboard.writeText(code);
+        alert('Código copiado — pégalo en la consola de instagram.com (F12)');
+      };
+    })();
+  </script>
 </body>
 </html>
