@@ -138,14 +138,46 @@
   // si Instagram lo redirige a HTML, la sesión está vencida o la
   // cuenta tiene bloqueo temporal de API — escanear sería inútil
   async function sessionAlive() {
-    try {
-      const r = await fetch(`https://www.instagram.com/api/v1/users/${USER_ID}/info/`, {
-        credentials: "same-origin", headers: HEADERS,
-      });
-      if (!r.ok) return "bad-status";
-      const t = await r.text();
-      return t.trimStart().startsWith("<") ? "redirected" : "ok";
-    } catch { return "network"; }
+    let sawRedirect = false;
+    for (const host of ["https://www.instagram.com", "https://i.instagram.com"]) {
+      try {
+        const r = await fetch(`${host}/api/v1/users/${USER_ID}/info/`, {
+          credentials: host === "https://i.instagram.com" ? "include" : "same-origin",
+          headers: HEADERS,
+        });
+        const t = await r.text();
+        if (r.ok && !t.trimStart().startsWith("<")) return "ok";
+        if (t.trimStart().startsWith("<")) sawRedirect = true;
+      } catch { /* sigue con el otro host */ }
+    }
+    return sawRedirect ? "redirected" : "network";
+  }
+
+  // pide una página; si www.instagram.com redirige a HTML, prueba el
+  // host i.instagram.com (API móvil, mismas cookies, suele no estar
+  // bloqueado aunque el de la web sí lo esté)
+  async function fetchPage(kind, maxId) {
+    const path = `/api/v1/friendships/${USER_ID}/${kind}/?count=${PAGE_SIZE}` +
+      (maxId ? `&max_id=${encodeURIComponent(maxId)}` : "");
+    for (const host of ["https://www.instagram.com", "https://i.instagram.com"]) {
+      try {
+        const res = await fetch(host + path, {
+          credentials: host === "https://i.instagram.com" ? "include" : "same-origin",
+          headers: HEADERS,
+        });
+        if (res.status === 429) return { rateLimited: true };
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (text.trimStart().startsWith("<")) {
+          console.warn("[NoMeSiguen]", host, "devolvió HTML, probando siguiente host");
+          continue;
+        }
+        return { data: JSON.parse(text) };
+      } catch (e) {
+        console.warn("[NoMeSiguen]", host, "falló:", e.message);
+      }
+    }
+    return null;
   }
 
   async function fetchList(kind, onPage) {
@@ -153,29 +185,21 @@
     let maxId = null, pages = 0;
     for (;;) {
       while (S.paused) await sleep(500);
-      const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
-      url.searchParams.set("count", PAGE_SIZE);
-      if (maxId) url.searchParams.set("max_id", maxId);
 
-      let res = null;
+      let data = null;
       for (let t = 0; t <= MAX_RETRIES; t++) {
-        res = await fetch(url, { credentials: "same-origin", headers: HEADERS });
-        if (res.status !== 429) break;
-        if (t === MAX_RETRIES) return { users, complete: false };
-        setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
-        await sleep(RETRY_DELAY);
+        const r = await fetchPage(kind, maxId);
+        if (r?.rateLimited) {
+          if (t === MAX_RETRIES) return { users, complete: false };
+          setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
+          await sleep(RETRY_DELAY);
+          continue;
+        }
+        if (r) { data = r.data; break; }
+        if (t === MAX_RETRIES) return { users, complete: false, htmlResponse: true };
+        await sleep(3000 + t * 3000);
       }
-      if (!res.ok) return { users, complete: false };
-
-      const text = await res.text();
-      if (text.trimStart().startsWith("<")) {
-        console.error("[NoMeSiguen] Instagram devolvió HTML en vez de JSON:",
-          res.status, res.url, "\n", text.slice(0, 300));
-        return { users, complete: false, htmlResponse: true };
-      }
-      let data;
-      try { data = JSON.parse(text); }
-      catch { return { users, complete: false }; }
+      if (!data) return { users, complete: false, htmlResponse: true };
 
       const page = data.users || [];
       users.push(...page);
