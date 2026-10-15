@@ -110,7 +110,8 @@
 
     <p class="fine">
       Todo ocurre en tu navegador — nada se envía a ningún servidor.<br>
-      ¿Prefieres la consola? <a href="#" id="copy-code">Copiar código</a> · <a href="https://github.com/manueljassi12/no-me-siguen" target="_blank">GitHub</a>.
+      ¿Prefieres la consola? <a href="#" id="copy-code">Copiar código</a> · <a href="https://github.com/manueljassi12/no-me-siguen" target="_blank">GitHub</a>.<br>
+      ¿Instagram te bloquea el escaneo? <a href="#" id="open-here"><b>Úsalo aquí mismo</b> con tu exportación oficial</a> — 100% seguro.
     </p>
   </div>
   <script>
@@ -133,6 +134,11 @@
         if (!code) { alert('Todavía cargando…'); return; }
         await navigator.clipboard.writeText(code);
         alert('Código copiado — pégalo en la consola de instagram.com (F12)');
+      };
+      document.getElementById('open-here').onclick = (e) => {
+        e.preventDefault();
+        if (!code) { alert('Todavía cargando…'); return; }
+        eval(code);
       };
     })();
   </script>

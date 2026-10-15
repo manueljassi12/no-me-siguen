@@ -23,7 +23,8 @@
 (() => {
   "use strict";
 
-  if (!location.hostname.endsWith("instagram.com")) {
+  const ON_IG = location.hostname.endsWith("instagram.com");
+  if (!ON_IG && !location.hostname.endsWith("github.io")) {
     alert("Abre instagram.com con tu sesión iniciada y vuelve a pegar el código.");
     return;
   }
@@ -86,6 +87,7 @@
     following: 0,
     followers: 0,
     incomplete: false,
+    fileMode: false,
     results: [],
     resultsMap: new Map(),
     fans: [],
@@ -351,6 +353,19 @@
       box-shadow: 0 12px 30px rgba(99,102,241,.45); }
     .btn-main:active { transform: scale(.98); }
     .hint { margin-top: 18px; font-size: 11px; color: #565e70; letter-spacing: .3px; }
+    .btn-file {
+      margin-top: 14px; background: transparent; color: #8b93a5;
+      font-size: 12.5px; font-weight: 600; padding: 10px 18px;
+      border: 1px solid rgba(255,255,255,.12); border-radius: 11px;
+      transition: all .15s;
+    }
+    .btn-file:hover { color: #c7c9fb; border-color: rgba(99,102,241,.5);
+      background: rgba(99,102,241,.08); }
+    .ava-letter {
+      width: 42px; height: 42px; border-radius: 50%; display: grid;
+      place-items: center; font-weight: 800; font-size: 17px; color: #fff;
+      background: linear-gradient(145deg, #6366f1, #38bdf8);
+    }
 
     /* ---- header ---- */
     header.top {
@@ -623,6 +638,8 @@
         <p>Descubre quién no te sigue de vuelta.<br>
            Resultados en tiempo real, directo en tu navegador.</p>
         <button class="btn-main" id="start">Escanear mi cuenta</button><br>
+        <button class="btn-file" id="filemode">o subir mi exportación de Instagram</button>
+        <input type="file" id="files" accept=".json" multiple style="display:none"><br>
         <a class="credit-pill" href="https://www.instagram.com/manuel_jassi" target="_blank">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
           hecho por <b>@manuel_jassi</b>
@@ -630,12 +647,59 @@
         <div class="hint">nada sale de esta ventana</div>
       </div></div>`;
     app.appendChild(div);
-    $("#start").onclick = () => startScan().catch((e) => {
+    $("#start").onclick = () => {
+      if (!ON_IG) { alert("El escaneo en vivo solo funciona en instagram.com. Aquí puedes usar la exportación de archivos."); return; }
+      startScan().catch((e) => {
       console.error("[NoMeSiguen]", e);
       setStatus(`Error: ${e.message}`);
       S.status = "done";
       updateProgress();
-    });
+      });
+    };
+    $("#filemode").onclick = () => $("#files").click();
+    $("#files").onchange = loadFiles;
+  }
+
+  /* ---------- modo archivo (exportación oficial de Instagram) ---------- */
+
+  async function loadFiles(e) {
+    let following = null, followers = null;
+    for (const f of e.target.files) {
+      try {
+        const j = JSON.parse(await f.text());
+        if (j.relationships_following) following = j.relationships_following;
+        else if (Array.isArray(j)) followers = j;
+      } catch { /* ignora archivos que no son */ }
+    }
+    if (!following || !followers) {
+      alert("No reconocí los archivos.\nNecesito following.json y followers_1.json de tu exportación de Instagram.");
+      return;
+    }
+
+    const followerSet = new Set(
+      followers.map((x) => x.string_list_data?.[0]?.value).filter(Boolean));
+
+    S.fileMode = true;
+    S.status = "done"; S.progress = 100; S.incomplete = false;
+    S.following = following.length;
+    S.followers = followerSet.size;
+
+    for (const x of following) {
+      const uname = x.title || x.string_list_data?.[0]?.value;
+      if (!uname) continue;
+      const n = { id: uname, username: uname, full_name: "", pic: "",
+        is_private: false, is_verified: false,
+        follows_viewer: followerSet.has(uname), pending: false };
+      S.results.push(n);
+      S.resultsMap.set(n.id, n);
+    }
+    for (const uname of followerSet) {
+      if (!S.resultsMap.has(uname))
+        S.fans.push({ id: uname, username: uname, full_name: "", pic: "",
+          is_private: false, is_verified: false, follows_viewer: true });
+    }
+    S.statusText = "Datos cargados desde tu exportación ✔";
+    renderWorkspace();
   }
 
   /* ---------- workspace ---------- */
@@ -696,7 +760,8 @@
               <button id="sel-all">Todos</button>
               <button id="sel-none">Limpiar</button>
             </div>
-            <button class="btn-unfollow" id="unfollow" ${S.incomplete || S.status !== "done" ? "disabled" : ""}>
+            <button class="btn-unfollow" id="unfollow" ${S.incomplete || S.status !== "done" || S.fileMode ? "disabled" : ""}
+              ${S.fileMode ? 'title="No disponible en modo archivo"' : ""}>
               Dejar de seguir (<span id="uf-n">${S.selected.size}</span>)
             </button>
           </div>
@@ -786,8 +851,9 @@
         <div class="row ${isNew ? "enter" : ""} ${u.pending ? "pending" : ""}"
              style="--d:${(i % PER_PAGE) * 25}ms">
           <div class="ava" title="Clic para ${inWhitelist(u.id) ? "quitar de" : "añadir a"} lista blanca" data-wl="${u.id}">
-            <img src="${esc(u.pic)}" alt="" loading="lazy"
-                 onerror="this.style.visibility='hidden'">
+            ${u.pic
+              ? `<img src="${esc(u.pic)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+              : `<div class="ava-letter">${esc((u.username[0] || "?").toUpperCase())}</div>`}
           </div>
           <div class="who">
             <a href="/${esc(u.username)}" target="_blank">@${esc(u.username)}</a>
@@ -983,7 +1049,7 @@
   /* ---------- unfollow ---------- */
 
   async function startUnfollow() {
-    if (S.incomplete || S.status !== "done") return;
+    if (S.incomplete || S.status !== "done" || S.fileMode) return;
     const targets = S.results.filter(
       (u) => S.selected.has(u.id) && !inWhitelist(u.id));
     if (!targets.length) { setStatus("Selecciona al menos un usuario."); return; }
