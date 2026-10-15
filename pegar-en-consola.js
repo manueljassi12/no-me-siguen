@@ -129,123 +129,42 @@
     "X-ASBD-ID": "129477",
     "X-CSRFToken": CSRF,
     "X-Requested-With": "XMLHttpRequest",
-    "Accept": "*/*",
   };
-  const wwwClaim = localStorage.getItem("www-claim-v2");
-  if (wwwClaim) HEADERS["X-IG-WWW-Claim"] = wwwClaim;
-
-  // Instagram migró muchas cuentas de /api/v1/friendships/ a GraphQL.
-  // Probamos ambos; el primero que responda JSON válido se usa para todo.
-  const GQL = {
-    followers: { hash: "c76146de99bb02f6415203be841dd25a", edge: "edge_followed_by" },
-    following: { hash: "d04b0a864b4b54837c0d870b0e77e076", edge: "edge_follow" },
-  };
-  let strategy = null; // "rest" | "rest2" | "gql" — se fija con la primera página válida
-  const DIAG = [];         // bitácora de intentos para el botón "Copiar diagnóstico"
-
-  function logDiag(msg) { DIAG.push(msg); console.info(`[NoMeSiguen] ${msg}`); }
-
-  async function fetchJSON(url) {
-    const res = await fetch(url, { credentials: "same-origin", headers: HEADERS });
-    if (res.status === 429) return { rateLimited: true, status: 429 };
-    const text = await res.text();
-    if (!res.ok) return { fail: `HTTP ${res.status}` };
-    if (text.trimStart().startsWith("<")) {
-      return { fail: `HTML (status ${res.status}, url final: ${res.url.slice(0, 50)})` };
-    }
-    try { return { data: JSON.parse(text) }; }
-    catch { return { fail: "respuesta no-JSON" }; }
-  }
-
-  function unpackREST(r) {
-    if (r.rateLimited) return r;
-    if (r.fail) return r;
-    if (!Array.isArray(r.data?.users)) return { fail: "JSON sin lista 'users'" };
-    return { users: r.data.users, next: r.data.next_max_id || null,
-             hasMore: !!r.data.has_more && !!r.data.next_max_id };
-  }
-
-  async function pageREST(kind, cursor) {
-    const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
-    url.searchParams.set("count", PAGE_SIZE);
-    if (cursor) url.searchParams.set("max_id", cursor);
-    return unpackREST(await fetchJSON(url));
-  }
-
-  // mismo endpoint pero con los parámetros que usa el cliente real
-  async function pageREST2(kind, cursor) {
-    const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
-    url.searchParams.set("count", PAGE_SIZE);
-    url.searchParams.set("search_surface", "follow_list_page");
-    url.searchParams.set("rank_token",
-      crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
-    if (cursor) url.searchParams.set("max_id", cursor);
-    return unpackREST(await fetchJSON(url));
-  }
-
-  async function pageGQL(kind, cursor) {
-    const vars = { id: USER_ID, include_reel: true, fetch_mutual: false, first: PAGE_SIZE };
-    if (cursor) vars.after = cursor;
-    const url = `https://www.instagram.com/graphql/query/?query_hash=${GQL[kind].hash}` +
-      `&variables=${encodeURIComponent(JSON.stringify(vars))}`;
-    const r = await fetchJSON(url);
-    if (r.rateLimited || r.fail) return r;
-    const edge = r.data?.data?.user?.[GQL[kind].edge];
-    if (!edge) return { fail: "GraphQL sin el campo esperado" };
-    return { users: (edge.edges || []).map((e) => e.node),
-             next: edge.page_info?.end_cursor || null,
-             hasMore: !!edge.page_info?.has_next_page };
-  }
-
-  async function fetchPage(kind, cursor) {
-    // el cursor de REST y GraphQL no son compatibles: en mitad de la lista
-    // hay que seguir con la misma estrategia; si es la 1ª página, se puede
-    // re-probar con las demás aunque ya exista una estrategia fijada
-    const strats = cursor && strategy ? [strategy]
-      : strategy ? [strategy, ...["rest", "rest2", "gql"].filter((s) => s !== strategy)]
-      : ["rest", "rest2", "gql"];
-    let saw429 = false;
-    for (const st of strats) {
-      const r = st === "gql" ? await pageGQL(kind, cursor)
-            : st === "rest2" ? await pageREST2(kind, cursor)
-            : await pageREST(kind, cursor);
-      if (r.rateLimited) { saw429 = true; logDiag(`${kind}/${st}: rate limit 429`); continue; }
-      if (r.fail) { logDiag(`${kind}/${st}: ${r.fail}`); continue; }
-      if (!strategy) { strategy = st; logDiag(`Endpoint que funcionó: ${st}`); }
-      return r;
-    }
-    return saw429 ? { rateLimited: true } : null;
-  }
 
   async function fetchList(kind, onPage) {
     const users = [];
-    let cursor = null, pages = 0;
+    let maxId = null, pages = 0;
     for (;;) {
       while (S.paused) await sleep(500);
+      const url = new URL(`https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/`);
+      url.searchParams.set("count", PAGE_SIZE);
+      if (maxId) url.searchParams.set("max_id", maxId);
 
-      let page = null;
+      let res = null;
       for (let t = 0; t <= MAX_RETRIES; t++) {
-        page = await fetchPage(kind, cursor);
-        if (page && !page.rateLimited) break;
+        res = await fetch(url, { credentials: "same-origin", headers: HEADERS });
+        if (res.status !== 429) break;
         if (t === MAX_RETRIES) return { users, complete: false };
-        if (page?.rateLimited) {
-          // backoff exponencial: 45s, 90s, 180s…
-          const wait = 45000 * (t + 1);
-          setStatus(`Instagram limitó el ritmo, esperando ${Math.round(wait / 1000)}s…`);
-          await sleep(wait);
-        } else {
-          // la página falló (HTML, timeout, etc.) — reintenta antes de rendirse
-          logDiag(`${kind}: página ${pages + 1} falló, reintento ${t + 1}`);
-          setStatus(`Una página falló — reintentando (${t + 1}/${MAX_RETRIES})…`);
-          await sleep(5000 + t * 5000);
-        }
+        setStatus(`Instagram pidió pausa, esperando ${RETRY_DELAY / 1000}s…`);
+        await sleep(RETRY_DELAY);
       }
-      if (!page) return { users, complete: false };
+      if (!res.ok) return { users, complete: false };
 
-      users.push(...page.users);
-      onPage(page.users, users.length);
-      if (!page.hasMore || !page.users.length) break;
-      cursor = page.next;
+      const text = await res.text();
+      if (text.trimStart().startsWith("<")) {
+        console.error("[NoMeSiguen] Instagram devolvió HTML en vez de JSON:",
+          res.status, res.url, "\n", text.slice(0, 300));
+        return { users, complete: false, htmlResponse: true };
+      }
+      let data;
+      try { data = JSON.parse(text); }
+      catch { return { users, complete: false }; }
+
+      const page = data.users || [];
+      users.push(...page);
+      onPage(page, users.length);
+      if (!data.has_more || !data.next_max_id || !page.length) break;
+      maxId = data.next_max_id;
       if (++pages % CYCLE_EVERY === 0) {
         const d = rand(CYCLE_DELAY);
         setStatus(`Pausa de seguridad ${Math.round(d / 1000)}s…`);
@@ -320,27 +239,11 @@
       background: linear-gradient(145deg, #6366f1, #4f46e5);
       box-shadow: 0 10px 30px rgba(99,102,241,.4);
     }
-    .mark svg { width: 30px; height: 30px; display: block; }
+    .mark span { font-size: 32px; color: #fff; }
     .home-card h1 { font-size: 26px; margin-bottom: 8px; font-weight: 800;
       letter-spacing: .2px; color: #f0f1f5; }
     .home-card p { color: #8b93a5; font-size: 13.5px; line-height: 1.7;
       margin-bottom: 28px; }
-    .credit-pill {
-      display: inline-flex; align-items: center; gap: 11px; margin-top: 28px;
-      padding: 14px 28px; border-radius: 999px; text-decoration: none;
-      background: linear-gradient(135deg, rgba(99,102,241,.22), rgba(56,189,248,.12));
-      border: 1px solid rgba(99,102,241,.6);
-      color: #e6e8ee; font-size: 15px; font-weight: 600; letter-spacing: .3px;
-      box-shadow: 0 10px 32px rgba(99,102,241,.25);
-      transition: all .15s;
-    }
-    .credit-pill:hover {
-      background: linear-gradient(135deg, rgba(99,102,241,.34), rgba(56,189,248,.2));
-      transform: translateY(-2px);
-      box-shadow: 0 14px 40px rgba(99,102,241,.4);
-    }
-    .credit-pill svg { width: 20px; height: 20px; color: #a5b0ff; }
-    .credit-pill b { color: #a5b0ff; font-size: 17px; font-weight: 800; }
     .btn-main {
       background: #6366f1; color: #fff; border-radius: 12px;
       padding: 14px 36px; font-size: 14px; font-weight: 700;
@@ -351,6 +254,19 @@
       box-shadow: 0 12px 30px rgba(99,102,241,.45); }
     .btn-main:active { transform: scale(.98); }
     .hint { margin-top: 18px; font-size: 11px; color: #565e70; letter-spacing: .3px; }
+    .credit { margin-top: 16px; display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 16px; border-radius: 999px; text-decoration: none;
+      font-size: 15px; font-weight: 800; color: #e8eaf0;
+      background: linear-gradient(135deg, rgba(139,92,246,.25), rgba(56,189,248,.2));
+      border: 1px solid rgba(139,92,246,.55); transition: .2s; }
+    .credit:hover { border-color: #8b5cf6; transform: translateY(-1px); }
+    .credit svg { width: 20px; height: 20px; }
+    .credit b { color: #a78bfa; }
+    .credit-top { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+      border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: 700;
+      color: #c4b5fd; border: 1px solid rgba(139,92,246,.5); transition: .2s; }
+    .credit-top:hover { border-color: #8b5cf6; color: #fff; }
+    .credit-top svg { width: 14px; height: 14px; }
 
     /* ---- header ---- */
     header.top {
@@ -363,14 +279,13 @@
       letter-spacing: .3px; color: #f0f1f5; display: flex; align-items: center; gap: 9px; }
     .logo i {
       width: 26px; height: 26px; border-radius: 8px; display: grid;
-      place-items: center; font-style: normal; color: #fff;
+      place-items: center; font-style: normal; font-size: 13px; color: #fff;
       background: linear-gradient(145deg, #6366f1, #4f46e5);
     }
-    .logo i svg { width: 14px; height: 14px; display: block; }
     .searchwrap { flex: 1; max-width: 320px; position: relative; }
-    .searchwrap svg {
-      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-      color: #565e70; width: 15px; height: 15px; pointer-events: none;
+    .searchwrap span {
+      position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+      color: #565e70; font-size: 14px; pointer-events: none;
     }
     .search {
       width: 100%; height: 38px; border-radius: 10px;
@@ -385,7 +300,6 @@
       box-shadow: 0 0 0 3px rgba(99,102,241,.15);
     }
     .top-btn {
-      display: inline-flex; align-items: center; gap: 6px;
       background: rgba(255,255,255,.05); color: #b9bfcc;
       border: 1px solid rgba(255,255,255,.1); border-radius: 10px;
       padding: 9px 14px; font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -395,17 +309,6 @@
       background: rgba(99,102,241,.14); color: #c7c9fb;
       border-color: rgba(99,102,241,.45);
     }
-    .credit {
-      display: inline-flex; align-items: center; gap: 7px;
-      color: #8b93a5; font-size: 12px; font-weight: 600; text-decoration: none;
-      white-space: nowrap; padding: 7px 13px; border-radius: 999px;
-      border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04);
-      transition: all .15s;
-    }
-    .credit:hover { color: #c7c9fb; border-color: rgba(99,102,241,.45);
-      background: rgba(99,102,241,.1); }
-    .credit svg { width: 13px; height: 13px; }
-    .credit b { color: #a5b0ff; }
 
     /* ---- layout ---- */
     .body { display: flex; max-width: 1180px; margin: 0 auto; gap: 20px;
@@ -618,13 +521,13 @@
     div.id = "home-root";
     div.innerHTML = `
       <div class="home"><div class="home-card">
-        <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></div>
+        <div class="mark"><span>♡</span></div>
         <h1>NoMeSiguen</h1>
         <p>Descubre quién no te sigue de vuelta.<br>
            Resultados en tiempo real, directo en tu navegador.</p>
-        <button class="btn-main" id="start">Escanear mi cuenta</button><br>
-        <a class="credit-pill" href="https://www.instagram.com/manuel_jassi" target="_blank">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+        <button class="btn-main" id="start">Escanear mi cuenta</button>
+        <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4.5"/><circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/></svg>
           hecho por <b>@manuel_jassi</b>
         </a>
         <div class="hint">nada sale de esta ventana</div>
@@ -647,21 +550,19 @@
     div.id = "ws-root";
     div.innerHTML = `
       <header class="top">
-        <div class="logo"><i><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg></i> NoMeSiguen</div>
-        <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
-          por <b>@manuel_jassi</b>
+        <div class="logo"><i>♡</i> NoMeSiguen</div>
+        <a class="credit-top" href="https://www.instagram.com/manuel_jassi" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4.5"/><circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/></svg>
+          @manuel_jassi
         </a>
-        <div class="searchwrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div class="searchwrap"><span>⌕</span>
           <input class="search" id="search" placeholder="Buscar usuarios…"
                  value="${esc(S.search)}">
         </div>
         <button class="top-btn" id="copy">Copiar lista</button>
         <button class="top-btn" id="exp-json">JSON</button>
         <button class="top-btn" id="exp-csv">CSV</button>
-        <button class="top-btn" id="diag" title="Copiar reporte técnico para soporte">Diagnóstico</button>
-        <button class="top-btn" id="refresh" title="Recargar y volver a Instagram"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Actualizar</button>
-        <button class="top-btn" id="exit"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Salir</button>
+        <button class="top-btn" id="exit">✕ Salir</button>
       </header>
       <div class="body">
         <aside>
@@ -671,7 +572,7 @@
             <div class="pbar"><i id="pfill" style="width:${S.progress}%"></i></div>
             <div class="scan-status" id="scan-status">${esc(S.statusText)}</div>
             ${S.status === "scanning"
-              ? `<button class="btn-sec" id="pause">${S.paused ? "Reanudar" : "Pausar"}</button>`
+              ? `<button class="btn-sec" id="pause">${S.paused ? "▶ Reanudar" : "⏸ Pausar"}</button>`
               : ""}
           </div>
           <div class="card">
@@ -685,7 +586,7 @@
             <div class="stat-row"><span><i class="dot" style="background:#8b5cf6"></i>Siguiendo</span><b id="st-fwing">${S.following}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#38bdf8"></i>Seguidores</span><b id="st-fwers">${S.followers}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#6366f1"></i>No me siguen</span><b class="hot" id="st-nome">${noMeSiguenCount()}</b></div>
-            <div class="stat-row"><span><i class="dot" style="background:#565e70"></i>Analizando</span><b id="st-pend">${S.results.filter(u => u.pending).length}</b></div>
+            <div class="stat-row"><span><i class="dot" style="background:#565e70"></i>Pendientes</span><b id="st-pend">${S.results.filter(u => u.pending).length}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#fbbf24"></i>Lista blanca</span><b class="wl" id="st-wl">${S.whitelist.length}</b></div>
             <div class="stat-row"><span><i class="dot" style="background:#4ade80"></i>Seleccionados</span><b id="st-sel">${S.selected.size}</b></div>
           </div>
@@ -716,8 +617,6 @@
     app.appendChild(div);
 
     $("#exit").onclick = () => location.reload();
-    $("#refresh").onclick = () => location.reload();
-    $("#diag").onclick = copyDiag;
     $("#search").oninput = (e) => { S.search = e.target.value; S.page = 1; updateList(); };
     $("#copy").onclick = copyList;
     $("#exp-json").onclick = () => exportFile("json");
@@ -725,7 +624,7 @@
     const pb = $("#pause");
     if (pb) pb.onclick = () => {
       S.paused = !S.paused;
-      pb.textContent = S.paused ? "Reanudar" : "Pausar";
+      pb.textContent = S.paused ? "▶ Reanudar" : "⏸ Pausar";
     };
     $$(".tab").forEach((t) => (t.onclick = () => {
       S.tab = t.dataset.t; S.page = 1;
@@ -794,19 +693,14 @@
             ${u.is_verified ? '<span class="badge-v"> ✔</span>' : ""}
             ${u.is_private ? ' <span class="badge-p">privado</span>' : ""}
             ${inWhitelist(u.id) ? ' <span class="badge-w">★</span>' : ""}
-            ${u.pending ? '<span class="chip-pending">analizando…</span>' : ""}
-            ${u.unverified ? '<span class="chip-pending">⚠ sin verificar</span>' : ""}
+            ${u.pending ? `<span class="chip-pending">${S.status === "scanning" ? "analizando…" : "sin verificar"}</span>` : ""}
             <div class="sub">${esc(u.full_name)}</div>
           </div>
-          ${u.unverified ? `<button class="top-btn" data-rv="${u.id}" title="Comprobar de nuevo si te sigue">↺ revisar</button>` : ""}
-          <input type="checkbox" data-id="${u.id}" ${S.selected.has(u.id) ? "checked" : ""} ${u.pending || u.unverified ? "disabled" : ""}>
+          <input type="checkbox" data-id="${u.id}" ${S.selected.has(u.id) ? "checked" : ""} ${u.pending ? "disabled" : ""}>
         </div>`;
       }).join("");
       list.querySelectorAll(".ava[data-wl]").forEach((a) => {
         a.onclick = () => toggleWhitelist(a.dataset.wl);
-      });
-      list.querySelectorAll("[data-rv]").forEach((b) => {
-        b.onclick = () => verifyUser(b.dataset.rv);
       });
       list.querySelectorAll("input[data-id]").forEach((cb) => {
         cb.onchange = () => {
@@ -825,27 +719,6 @@
     if (nx) nx.onclick = () => { S.page++; updateList(); };
   }
 
-  // re-verifica una sola cuenta (cuando el escaneo de seguidores quedó incompleto)
-  async function verifyUser(id) {
-    const u = S.resultsMap.get(id);
-    if (!u) return;
-    setStatus(`Verificando @${u.username}…`);
-    const r = await fetchJSON(
-      `https://www.instagram.com/api/v1/friendships/show/${id}/`);
-    const followedBy = r?.data?.followed_by ?? r?.data?.friendship_status?.followed_by;
-    if (followedBy === undefined) {
-      setStatus(`No se pudo verificar @${u.username}.`);
-      return;
-    }
-    u.unverified = false;
-    u.follows_viewer = !!followedBy;
-    if (u.follows_viewer) S.selected.delete(id);
-    setStatus(followedBy
-      ? `@${u.username} SÍ te sigue ✔`
-      : `@${u.username} no te sigue`);
-    updateList();
-  }
-
   function toggleWhitelist(id) {
     if (inWhitelist(id)) {
       S.whitelist = S.whitelist.filter((u) => u.id !== id);
@@ -860,22 +733,6 @@
   }
 
   /* ---------- exportar ---------- */
-
-  function copyDiag() {
-    const report = [
-      "=== Diagnóstico NoMeSiguen ===",
-      `user-agent: ${navigator.userAgent}`,
-      `cookies: sessionid=${cookie("sessionid") ? "SI" : "NO"} ds_user_id=${USER_ID ? "SI" : "NO"} csrftoken=${CSRF ? "SI" : "NO"}`,
-      `endpoint usado: ${strategy || "ninguno funcionó"}`,
-      ...DIAG,
-      `seguidos descargados: ${S.following}`,
-      `seguidores descargados: ${S.followers}`,
-      `estado: ${S.status} | incompleto: ${S.incomplete}`,
-    ].join("\n");
-    navigator.clipboard.writeText(report)
-      .then(() => setStatus("Diagnóstico copiado — pégaselo a quien te ayude"))
-      .catch(() => console.log(report));
-  }
 
   function copyList() {
     navigator.clipboard.writeText(
@@ -924,16 +781,12 @@
     if (!fwing.users.length) {
       S.incomplete = true;
       S.status = "done";
-      setStatus("Instagram no devolvió datos. Presiona el botón 'Diagnóstico' arriba y comparte lo que copia.");
+      setStatus(fwing.htmlResponse
+        ? "Instagram no devolvió datos (respondió HTML) — verifica tu sesión."
+        : "Instagram no devolvió datos — revisa tu sesión y reintenta.");
       renderWorkspace();
       return;
     }
-
-    // pausa larga entre listas — Instagram bloquea "followers" si llega
-    // demasiado pronto después de descargar "following"
-    const gap = rand([20000, 30000]);
-    setStatus(`Pausa de seguridad entre listas ${Math.round(gap / 1000)}s…`);
-    await sleep(gap);
 
     setStatus("Descargando seguidores…");
     const fwers = await fetchList("followers", (page, total) => {
@@ -951,16 +804,10 @@
       updateList();
     });
 
+    // solo se confirma como "no te sigue" si la lista de seguidores
+    // se descargó completa; si se interrumpió, quedan pendientes
     S.results.forEach((u) => {
-      if (!u.pending) return;
-      u.pending = false;
-      if (fwers.complete) {
-        u.follows_viewer = false;
-      } else {
-        // la lista de seguidores quedó incompleta: no podemos afirmar
-        // que no te sigue — queda marcado para verificación individual
-        u.unverified = true;
-      }
+      if (u.pending && fwers.complete) { u.pending = false; u.follows_viewer = false; }
     });
     // quita de la selección a quienes resultaron seguidores
     S.selected.forEach((id) => {
