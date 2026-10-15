@@ -130,6 +130,23 @@
     "X-CSRFToken": CSRF,
     "X-Requested-With": "XMLHttpRequest",
   };
+  // Instagram exige este header en sesiones marcadas; si existe, se envía
+  const wwwClaim = localStorage.getItem("www-claim-v2");
+  if (wwwClaim) HEADERS["X-IG-WWW-Claim"] = wwwClaim;
+
+  // chequeo previo: un endpoint ligero que debe responder JSON.
+  // si Instagram lo redirige a HTML, la sesión está vencida o la
+  // cuenta tiene bloqueo temporal de API — escanear sería inútil
+  async function sessionAlive() {
+    try {
+      const r = await fetch(`https://www.instagram.com/api/v1/users/${USER_ID}/info/`, {
+        credentials: "same-origin", headers: HEADERS,
+      });
+      if (!r.ok) return "bad-status";
+      const t = await r.text();
+      return t.trimStart().startsWith("<") ? "redirected" : "ok";
+    } catch { return "network"; }
+  }
 
   async function fetchList(kind, onPage) {
     const users = [];
@@ -764,6 +781,19 @@
   async function startScan() {
     S.status = "scanning";
     renderWorkspace();
+    setStatus("Verificando sesión…");
+
+    const alive = await sessionAlive();
+    if (alive !== "ok") {
+      S.status = "done";
+      S.incomplete = true;
+      setStatus(alive === "redirected"
+        ? "Instagram está redirigiendo las peticiones (sesión vencida o bloqueo temporal). Recarga instagram.com — si te pide iniciar sesión, entra de nuevo. Si tu feed se ve normal, tu cuenta tiene límite temporal: espera 1-2 horas sin usar la app."
+        : "No se pudo verificar la sesión — revisa tu conexión y que estés dentro de instagram.com.");
+      renderWorkspace();
+      return;
+    }
+
     setStatus("Descargando seguidos…");
 
     const fwing = await fetchList("following", (page, total) => {
