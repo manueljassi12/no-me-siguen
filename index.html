@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NoMeSiguen — Instalar</title>
+<style>
+  * { box-sizing: border-box; margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body {
+    min-height: 100vh; background: #0b0e13; color: #e6e8ee;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 60% 40% at 50% -10%, rgba(99,102,241,.16), transparent 70%);
+  }
+  .card {
+    position: relative; max-width: 480px; width: 100%; text-align: center;
+    background: #12161d; border: 1px solid rgba(255,255,255,.09);
+    border-radius: 22px; padding: 48px 40px 36px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.55);
+  }
+  .mark {
+    width: 76px; height: 76px; margin: 0 auto 22px; border-radius: 22px;
+    display: grid; place-items: center;
+    background: linear-gradient(145deg, #6366f1, #4f46e5);
+    box-shadow: 0 12px 34px rgba(99,102,241,.45);
+  }
+  .mark svg { width: 34px; height: 34px; }
+  h1 { font-size: 30px; font-weight: 800; letter-spacing: .2px; }
+  .sub { color: #8b93a5; font-size: 14px; line-height: 1.7; margin: 12px 0 30px; }
+
+  /* el marcador arrastrable */
+  .drag-zone {
+    border: 1.5px dashed rgba(99,102,241,.4); border-radius: 16px;
+    padding: 22px 18px; margin-bottom: 26px; background: rgba(99,102,241,.05);
+  }
+  .bookmarklet {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 15px 32px; border-radius: 13px; text-decoration: none;
+    background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff;
+    font-size: 16px; font-weight: 800; letter-spacing: .3px; cursor: grab;
+    box-shadow: 0 10px 30px rgba(99,102,241,.4);
+    transition: transform .15s, box-shadow .15s; user-select: none;
+  }
+  .bookmarklet:hover { transform: translateY(-2px); box-shadow: 0 14px 38px rgba(99,102,241,.55); }
+  .bookmarklet:active { cursor: grabbing; transform: scale(.97); }
+  .bookmarklet svg { width: 18px; height: 18px; }
+  .drag-hint { margin-top: 14px; font-size: 12.5px; color: #7dd3fc; font-weight: 600; }
+
+  .steps { text-align: left; margin: 0 auto 8px; max-width: 380px; }
+  .steps li {
+    list-style: none; color: #b9bfcc; font-size: 13.5px; line-height: 1.65;
+    padding: 9px 0 9px 38px; position: relative; border-bottom: 1px solid rgba(255,255,255,.05);
+  }
+  .steps li:last-child { border: none; }
+  .steps li b { color: #e6e8ee; }
+  .steps li::before {
+    content: attr(data-n); position: absolute; left: 0; top: 11px;
+    width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    background: rgba(99,102,241,.15); border: 1px solid rgba(99,102,241,.4);
+    color: #a5b0ff; font-size: 12px; font-weight: 800;
+  }
+  kbd {
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15);
+    border-radius: 5px; padding: 1px 7px; font-size: 12px; font-family: inherit;
+  }
+
+  .credit {
+    display: inline-flex; align-items: center; gap: 9px; margin-top: 26px;
+    padding: 11px 24px; border-radius: 999px; text-decoration: none;
+    background: linear-gradient(135deg, rgba(99,102,241,.22), rgba(56,189,248,.12));
+    border: 1px solid rgba(99,102,241,.55); color: #e6e8ee;
+    font-size: 14px; font-weight: 600; transition: all .15s;
+  }
+  .credit:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(99,102,241,.35); }
+  .credit svg { width: 17px; height: 17px; color: #a5b0ff; }
+  .credit b { color: #a5b0ff; font-weight: 800; }
+
+  .fine { margin-top: 20px; font-size: 11.5px; color: #565e70; line-height: 1.6; }
+  .fine a { color: #8b93a5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+    </div>
+    <h1>NoMeSiguen</h1>
+    <p class="sub">Descubre quién no te sigue de vuelta en Instagram.<br>Sin apps, sin consola, sin contraseñas.</p>
+
+    <div class="drag-zone">
+      <a class="bookmarklet" href="javascript:(()=>{fetch('https://raw.githubusercontent.com/manueljassi12/no-me-siguen/main/pegar-en-consola.js').then(r=>r.text()).then(eval)})()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        NoMeSiguen
+      </a>
+      <div class="drag-hint">↑ ARRASTRA este botón a tu barra de favoritos ↑</div>
+    </div>
+
+    <ol class="steps">
+      <li data-n="1">Muestra tu barra de favoritos con <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> y <b>arrastra el botón</b> hasta ella</li>
+      <li data-n="2">Entra a <b>instagram.com</b> con tu sesión iniciada</li>
+      <li data-n="3">Haz <b>clic en el marcador</b> "NoMeSiguen" y dale a <b>Escanear mi cuenta</b></li>
+    </ol>
+
+    <a class="credit" href="https://www.instagram.com/manuel_jassi" target="_blank">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+      hecho por <b>@manuel_jassi</b>
+    </a>
+
+    <p class="fine">
+      Todo ocurre en tu navegador — nada se envía a ningún servidor.<br>
+      ¿Prefieres la consola? Código en <a href="https://github.com/manueljassi12/no-me-siguen" target="_blank">GitHub</a>.
+    </p>
+  </div>
+</body>
+</html>
