@@ -136,10 +136,11 @@ class App(ctk.CTk):
                 self._status("Iniciando sesión...")
                 self._do_login(cl, username, password, code)
 
+            uid = cl.user_id or cl.account_info().pk
             self._status("Descargando seguidores...")
-            followers = cl.user_followers(cl.user_id)
+            followers = cl.user_followers(uid)
             self._status("Descargando seguidos...")
-            following = cl.user_following(cl.user_id)
+            following = cl.user_following(uid)
 
             fers = {u.pk: u for u in followers.values()}
             fing = {u.pk: u for u in following.values()}

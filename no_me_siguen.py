@@ -58,6 +58,8 @@ def get_client() -> Client:
             "Instagram pide verificar que eres tú. Abre la app o el navegador, "
             "confirma el inicio de sesión y vuelve a ejecutar el script."
         )
+    except PleaseWaitFewMinutes:
+        sys.exit("Instagram está limitando las peticiones. Espera unos minutos y reintenta.")
 
     cl.dump_settings(SESSION_FILE)
     print("Sesión guardada.\n")
@@ -68,12 +70,13 @@ def main() -> None:
     cl = get_client()
 
     try:
+        uid = cl.user_id or cl.account_info().pk
         print("Descargando lista de seguidores...")
-        followers = cl.user_followers(cl.user_id)
+        followers = cl.user_followers(uid)
         print(f"  {len(followers)} seguidores.")
 
         print("Descargando lista de seguidos...")
-        following = cl.user_following(cl.user_id)
+        following = cl.user_following(uid)
         print(f"  {len(following)} seguidos.\n")
     except PleaseWaitFewMinutes:
         sys.exit("Instagram está limitando las peticiones. Espera unos minutos y reintenta.")

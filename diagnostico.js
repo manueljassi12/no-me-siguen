@@ -25,22 +25,20 @@
     "Accept": "*/*",
   };
 
-  const rest = `https://www.instagram.com/api/v1/friendships/${uid}/following/?count=5`;
-  const gqlFers = `https://www.instagram.com/graphql/query/?query_hash=c76146de99bb02f6415203be841dd25a&variables=` +
-    encodeURIComponent(JSON.stringify({ id: uid, include_reel: true, fetch_mutual: true, first: 5 }));
-  const gqlFing = `https://www.instagram.com/graphql/query/?query_hash=d04b0a864b4b54837c0d870b0e77e076&variables=` +
-    encodeURIComponent(JSON.stringify({ id: uid, include_reel: true, fetch_mutual: true, first: 5 }));
+  const rest = `https://www.instagram.com/api/v1/friendships/${uid}/following/?count=5&search_surface=follow_list_page`;
+  const restMovil = `https://i.instagram.com/api/v1/friendships/${uid}/following/?count=5`;
+  const info = `https://www.instagram.com/api/v1/users/${uid}/info/`;
 
   const tests = [
-    ["REST friendships", rest, H],
-    ["REST + X-IG-WWW-Claim", rest, { ...H, "X-IG-WWW-Claim": claim || "0" }],
-    ["GraphQL followers", gqlFers, H],
-    ["GraphQL following", gqlFing, H],
+    ["REST friendships (www)", rest, H, "same-origin"],
+    ["REST + X-IG-WWW-Claim", rest, { ...H, "X-IG-WWW-Claim": claim || "0" }, "same-origin"],
+    ["REST friendships (i.instagram.com)", restMovil, H, "include"],
+    ["users/info", info, H, "same-origin"],
   ];
 
-  for (const [name, url, headers] of tests) {
+  for (const [name, url, headers, creds] of tests) {
     try {
-      const r = await fetch(url, { credentials: "same-origin", headers });
+      const r = await fetch(url, { credentials: creds, headers });
       const t = await r.text();
       const esJson = !t.trimStart().startsWith("<");
       console.log(`\n=== ${name} ===`);

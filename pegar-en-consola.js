@@ -89,6 +89,7 @@
     results: [],
     resultsMap: new Map(),
     fans: [],
+    fanIds: new Set(),
     whitelist: loadWhitelist(),
     selected: new Set(),
     tab: "nome",           // nome | fans | wl
@@ -126,13 +127,34 @@
 
   const HEADERS = {
     "X-IG-App-ID": "936619743392459",
-    "X-ASBD-ID": "129477",
+    "X-ASBD-ID": "198387",
     "X-CSRFToken": CSRF,
     "X-Requested-With": "XMLHttpRequest",
   };
   // Instagram exige este header en sesiones marcadas; si existe, se envía
   const wwwClaim = localStorage.getItem("www-claim-v2");
   if (wwwClaim) HEADERS["X-IG-WWW-Claim"] = wwwClaim;
+
+  // El X-ASBD-ID lo rota Instagram de vez en cuando; viene embebido en el
+  // bundle JS de la página. Intentamos leer el valor vigente y si no se
+  // puede, se queda el valor fijo de arriba.
+  let asbdPromise = null;
+  function ensureAsbdId() {
+    if (!asbdPromise) {
+      asbdPromise = (async () => {
+        try {
+          const src = [...document.scripts]
+            .map((s) => s.src)
+            .find((u) => u.includes("ConsumerLibCommons"));
+          if (!src) return;
+          const js = await (await fetch(src)).text();
+          const m = js.match(/ASBD_ID\s*=\s*['"](\d+)['"]/);
+          if (m) HEADERS["X-ASBD-ID"] = m[1];
+        } catch { /* se queda el valor fijo */ }
+      })();
+    }
+    return asbdPromise;
+  }
 
   // chequeo previo: un endpoint ligero que debe responder JSON.
   // si Instagram lo redirige a HTML, la sesión está vencida o la
@@ -159,7 +181,9 @@
   // bloqueado aunque el de la web sí lo esté)
   async function fetchPage(kind, maxId) {
     const path = `/api/v1/friendships/${USER_ID}/${kind}/?count=${PAGE_SIZE}` +
+      `&search_surface=follow_list_page` +
       (maxId ? `&max_id=${encodeURIComponent(maxId)}` : "");
+    let sawHtml = false;
     for (const host of ["https://www.instagram.com", "https://i.instagram.com"]) {
       try {
         const res = await fetch(host + path, {
@@ -171,6 +195,7 @@
         const text = await res.text();
         if (text.trimStart().startsWith("<")) {
           console.warn("[NoMeSiguen]", host, "devolvió HTML, probando siguiente host");
+          sawHtml = true;
           continue;
         }
         return { data: JSON.parse(text) };
@@ -178,7 +203,7 @@
         console.warn("[NoMeSiguen]", host, "falló:", e.message);
       }
     }
-    return null;
+    return sawHtml ? { html: true } : null;
   }
 
   async function fetchList(kind, onPage) {
@@ -187,7 +212,7 @@
     for (;;) {
       while (S.paused) await sleep(500);
 
-      let data = null;
+      let data = null, sawHtml = false;
       for (let t = 0; t <= MAX_RETRIES; t++) {
         const r = await fetchPage(kind, maxId);
         if (r?.rateLimited) {
@@ -196,16 +221,19 @@
           await sleep(RETRY_DELAY);
           continue;
         }
-        if (r) { data = r.data; break; }
-        if (t === MAX_RETRIES) return { users, complete: false, htmlResponse: true };
+        if (r?.data) { data = r.data; break; }
+        if (r?.html) sawHtml = true;
+        if (t === MAX_RETRIES) return { users, complete: false, htmlResponse: sawHtml };
         await sleep(3000 + t * 3000);
       }
-      if (!data) return { users, complete: false, htmlResponse: true };
+      if (!data) return { users, complete: false, htmlResponse: sawHtml };
 
       const page = data.users || [];
       users.push(...page);
       onPage(page, users.length);
-      if (!data.has_more || !data.next_max_id || !page.length) break;
+      // Instagram pagina solo con next_max_id; has_more no siempre viene —
+      // seguimos mientras haya cursor y la página no esté vacía
+      if (!data.next_max_id || !page.length || data.has_more === false) break;
       maxId = data.next_max_id;
       if (++pages % CYCLE_EVERY === 0) {
         const d = rand(CYCLE_DELAY);
@@ -679,8 +707,8 @@
         S.page = 1; updateList();
       };
     });
-    $("#sel-page").onclick = () => { pageUsers().forEach((u) => S.selected.add(u.id)); updateList(); };
-    $("#sel-all").onclick = () => { visibleUsers().forEach((u) => S.selected.add(u.id)); updateList(); };
+    $("#sel-page").onclick = () => { pageUsers().forEach((u) => { if (!u.pending) S.selected.add(u.id); }); updateList(); };
+    $("#sel-all").onclick = () => { visibleUsers().forEach((u) => { if (!u.pending) S.selected.add(u.id); }); updateList(); };
     $("#sel-none").onclick = () => { S.selected.clear(); updateList(); };
     $("#unfollow").onclick = startUnfollow;
     S.renderedIds.clear();
@@ -704,6 +732,18 @@
     setN("#n-wl", `(${S.whitelist.length})`);
   }
 
+  // durante el escaneo, reconstruir toda la lista en cada página es muy
+  // caro (cuentas con miles de seguidos) — se agrupa en un timer
+  let listTimer = null;
+  function queueListUpdate() {
+    updateStats();
+    if (listTimer) return;
+    listTimer = setTimeout(() => {
+      listTimer = null;
+      if (S.status === "scanning") updateList();
+    }, 350);
+  }
+
   function updateList() {
     updateStats();
     const users = visibleUsers();
@@ -711,6 +751,7 @@
     if (S.page > maxPage) S.page = maxPage;
 
     const list = $("#list");
+    if (!list) return;
     const rows = pageUsers();
     if (!users.length) {
       list.innerHTML = `<div class="empty">
@@ -808,6 +849,7 @@
     renderWorkspace();
     setStatus("Verificando sesión…");
 
+    await ensureAsbdId();
     const alive = await sessionAlive();
     if (alive !== "ok") {
       S.status = "done";
@@ -826,6 +868,8 @@
     const fwing = await fetchList("following", (page, total) => {
       page.forEach((u) => {
         const n = normalize(u, null);
+        // Instagram a veces repite usuarios entre páginas
+        if (S.resultsMap.has(n.id)) return;
         S.results.push(n);
         S.resultsMap.set(n.id, n);
       });
@@ -833,9 +877,9 @@
       S.progress = Math.min(45, Math.round(total / 20));
       updateProgress();
       setStatus(`Descargando seguidos… ${total}`);
-      updateList();
+      queueListUpdate();
     });
-    if (!fwing.users.length) {
+    if (!fwing.users.length && !fwing.complete) {
       S.incomplete = true;
       S.status = "done";
       setStatus(fwing.htmlResponse
@@ -847,18 +891,20 @@
 
     setStatus("Descargando seguidores…");
     const fwers = await fetchList("followers", (page, total) => {
-      const followingIds = S.resultsMap;
       page.forEach((u) => {
         const id = uid(u);
-        const r = followingIds.get(id);
+        const r = S.resultsMap.get(id);
         if (r) { r.follows_viewer = true; r.pending = false; }
-        else S.fans.push({ ...normalize(u, true), follows_them: false });
+        else if (!S.fanIds.has(id)) {
+          S.fanIds.add(id);
+          S.fans.push({ ...normalize(u, true), follows_them: false });
+        }
       });
       S.followers = total;
       S.progress = 45 + Math.min(50, Math.round(total / 30));
       updateProgress();
       setStatus(`Descargando seguidores… ${total}`);
-      updateList();
+      queueListUpdate();
     });
 
     // solo se confirma como "no te sigue" si la lista de seguidores
