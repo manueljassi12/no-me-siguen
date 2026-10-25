@@ -156,54 +156,47 @@
     return asbdPromise;
   }
 
-  // chequeo previo: un endpoint ligero que debe responder JSON.
-  // si Instagram lo redirige a HTML, la sesión está vencida o la
-  // cuenta tiene bloqueo temporal de API — escanear sería inútil
+  // chequeo previo: pedimos una página mínima del endpoint que realmente
+  // vamos a usar (users/info tiene su propio límite y puede dar 429 aunque
+  // friendships funcione). si responde HTML o 401/403, la sesión está
+  // vencida o hay bloqueo temporal — escanear sería inútil
   async function sessionAlive() {
-    let sawRedirect = false;
-    for (const host of ["https://www.instagram.com", "https://i.instagram.com"]) {
-      try {
-        const r = await fetch(`${host}/api/v1/users/${USER_ID}/info/`, {
-          credentials: host === "https://i.instagram.com" ? "include" : "same-origin",
-          headers: HEADERS,
-        });
-        if (r.status === 429) return "limited";
-        const t = await r.text();
-        if (r.ok && !t.trimStart().startsWith("<")) return "ok";
-        if (t.trimStart().startsWith("<")) sawRedirect = true;
-      } catch { /* sigue con el otro host */ }
+    try {
+      const r = await fetch(
+        `https://www.instagram.com/api/v1/friendships/${USER_ID}/following/?count=1`,
+        { credentials: "same-origin", headers: HEADERS });
+      if (r.status === 429) return "limited";
+      const t = await r.text();
+      if (r.ok && !t.trimStart().startsWith("<")) return "ok";
+      if (t.trimStart().startsWith("<") || r.status === 401 || r.status === 403)
+        return "redirected";
+      return "network";
+    } catch {
+      return "network";
     }
-    return sawRedirect ? "redirected" : "network";
   }
 
-  // pide una página; si www.instagram.com redirige a HTML, prueba el
-  // host i.instagram.com (API móvil, mismas cookies, suele no estar
-  // bloqueado aunque el de la web sí lo esté)
+  // pide una página a la API web de Instagram. (el host móvil
+  // i.instagram.com no sirve como fallback desde el navegador: es otro
+  // origen y la respuesta siempre queda bloqueada por CORS)
   async function fetchPage(kind, maxId) {
-    const path = `/api/v1/friendships/${USER_ID}/${kind}/?count=${PAGE_SIZE}` +
+    const path = `https://www.instagram.com/api/v1/friendships/${USER_ID}/${kind}/?count=${PAGE_SIZE}` +
       `&search_surface=follow_list_page` +
       (maxId ? `&max_id=${encodeURIComponent(maxId)}` : "");
-    let sawHtml = false;
-    for (const host of ["https://www.instagram.com", "https://i.instagram.com"]) {
-      try {
-        const res = await fetch(host + path, {
-          credentials: host === "https://i.instagram.com" ? "include" : "same-origin",
-          headers: HEADERS,
-        });
-        if (res.status === 429) return { rateLimited: true };
-        if (!res.ok) continue;
-        const text = await res.text();
-        if (text.trimStart().startsWith("<")) {
-          console.warn("[NoMeSiguen]", host, "devolvió HTML, probando siguiente host");
-          sawHtml = true;
-          continue;
-        }
-        return { data: JSON.parse(text) };
-      } catch (e) {
-        console.warn("[NoMeSiguen]", host, "falló:", e.message);
+    try {
+      const res = await fetch(path, { credentials: "same-origin", headers: HEADERS });
+      if (res.status === 429) return { rateLimited: true };
+      if (!res.ok) return null;
+      const text = await res.text();
+      if (text.trimStart().startsWith("<")) {
+        console.warn("[NoMeSiguen] Instagram devolvió HTML");
+        return { html: true };
       }
+      return { data: JSON.parse(text) };
+    } catch (e) {
+      console.warn("[NoMeSiguen] petición falló:", e.message);
+      return null;
     }
-    return sawHtml ? { html: true } : null;
   }
 
   async function fetchList(kind, onPage) {

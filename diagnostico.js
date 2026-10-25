@@ -26,13 +26,13 @@
   };
 
   const rest = `https://www.instagram.com/api/v1/friendships/${uid}/following/?count=5&search_surface=follow_list_page`;
-  const restMovil = `https://i.instagram.com/api/v1/friendships/${uid}/following/?count=5`;
+  const restFers = `https://www.instagram.com/api/v1/friendships/${uid}/followers/?count=5&search_surface=follow_list_page`;
   const info = `https://www.instagram.com/api/v1/users/${uid}/info/`;
 
   const tests = [
-    ["REST friendships (www)", rest, H, "same-origin"],
+    ["REST following (www)", rest, H, "same-origin"],
     ["REST + X-IG-WWW-Claim", rest, { ...H, "X-IG-WWW-Claim": claim || "0" }, "same-origin"],
-    ["REST friendships (i.instagram.com)", restMovil, H, "include"],
+    ["REST followers (www)", restFers, H, "same-origin"],
     ["users/info", info, H, "same-origin"],
   ];
 
